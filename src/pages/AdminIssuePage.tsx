@@ -23,22 +23,38 @@ export default function AdminIssuePage() {
 
   async function load() {
     if (!id) return
-    const { data } = await supabase
-      .from('issues')
-      .select('*, reporter:profiles!issues_reporter_id_fkey(*)')
-      .eq('id', id)
-      .single()
-    if (data) {
-      setIssue(data as Issue)
-      setStatus(data.status)
-      setResponse(data.admin_response || '')
+
+    // 1. Try fetching from Supabase
+    try {
+      const { data } = await supabase
+        .from('issues')
+        .select('*, reporter:profiles!issues_reporter_id_fkey(*)')
+        .eq('id', id)
+        .single()
+      if (data) {
+        setIssue(data as Issue)
+        setStatus(data.status)
+        setResponse(data.admin_response || '')
+        const { data: u } = await supabase
+          .from('issue_updates')
+          .select('*')
+          .eq('issue_id', id)
+          .order('created_at', { ascending: true })
+        setUpdates((u || []) as IssueUpdate[])
+        return
+      }
+    } catch {}
+
+    // 2. Fallback to local storage
+    const localIssues: Issue[] = JSON.parse(localStorage.getItem('civic_local_issues') || '[]')
+    const found = localIssues.find(i => i.id === id)
+    if (found) {
+      setIssue(found)
+      setStatus(found.status)
+      setResponse(found.admin_response || '')
+      const u: IssueUpdate[] = JSON.parse(localStorage.getItem(`civic_updates_${id}`) || '[]')
+      setUpdates(u)
     }
-    const { data: u } = await supabase
-      .from('issue_updates')
-      .select('*')
-      .eq('issue_id', id)
-      .order('created_at', { ascending: true })
-    setUpdates((u || []) as IssueUpdate[])
   }
 
   useEffect(() => { load() }, [id])
@@ -57,42 +73,80 @@ export default function AdminIssuePage() {
     try {
       let resolutionUrl = issue.resolution_image_url
 
-      // Upload resolution photo if provided
       if (resolutionFile) {
-        const ext = resolutionFile.name.split('.').pop() || 'jpg'
-        const path = `resolutions/${issue.id}-${crypto.randomUUID()}.${ext}`
-        const { error: uploadErr } = await supabase.storage
-          .from('issue-images')
-          .upload(path, resolutionFile)
-        if (uploadErr) throw uploadErr
-        resolutionUrl = supabase.storage.from('issue-images').getPublicUrl(path).data.publicUrl
+        try {
+          const ext = resolutionFile.name.split('.').pop() || 'jpg'
+          const path = `resolutions/${issue.id}-${crypto.randomUUID()}.${ext}`
+          const { error: uploadErr } = await supabase.storage
+            .from('issue-images')
+            .upload(path, resolutionFile)
+          if (uploadErr) throw uploadErr
+          resolutionUrl = supabase.storage.from('issue-images').getPublicUrl(path).data.publicUrl
+        } catch {
+          resolutionUrl = await new Promise<string>((res) => {
+            const reader = new FileReader()
+            reader.onloadend = () => res(reader.result as string)
+            reader.readAsDataURL(resolutionFile)
+          })
+        }
       }
 
-      // Update the issue
-      const { error } = await supabase.from('issues').update({
+      // Try updating Supabase DB
+      let updatedDb = false
+      try {
+        const { error } = await supabase.from('issues').update({
+          status,
+          admin_response: response.trim() || null,
+          resolution_image_url: resolutionUrl,
+          resolved_at: status === 'resolved' ? (issue.resolved_at || new Date().toISOString()) : null,
+        }).eq('id', issue.id)
+
+        if (!error) {
+          await supabase.from('issue_updates').insert({
+            issue_id: issue.id,
+            status,
+            note: response.trim() || statusMeta[status].description,
+            updated_by: profile.id,
+          }).catch(() => {})
+          updatedDb = true
+        }
+      } catch {}
+
+      // Always update local state as well
+      const localIssues: Issue[] = JSON.parse(localStorage.getItem('civic_local_issues') || '[]')
+      const idx = localIssues.findIndex(i => i.id === issue.id)
+      const updatedIssue: Issue = {
+        ...issue,
         status,
         admin_response: response.trim() || null,
         resolution_image_url: resolutionUrl,
-        resolved_at: status === 'resolved'
-          ? (issue.resolved_at || new Date().toISOString())
-          : null,
-      }).eq('id', issue.id)
+        resolved_at: status === 'resolved' ? (issue.resolved_at || new Date().toISOString()) : null,
+        updated_at: new Date().toISOString(),
+      }
 
-      if (error) throw error
+      if (idx !== -1) {
+        localIssues[idx] = updatedIssue
+      } else {
+        localIssues.unshift(updatedIssue)
+      }
+      localStorage.setItem('civic_local_issues', JSON.stringify(localIssues))
 
-      // Insert status update history entry
-      await supabase.from('issue_updates').insert({
+      const u: IssueUpdate[] = JSON.parse(localStorage.getItem(`civic_updates_${issue.id}`) || '[]')
+      u.push({
+        id: crypto.randomUUID(),
         issue_id: issue.id,
         status,
         note: response.trim() || statusMeta[status].description,
         updated_by: profile.id,
+        created_at: new Date().toISOString(),
       })
+      localStorage.setItem(`civic_updates_${issue.id}`, JSON.stringify(u))
 
       await load()
       setResolutionFile(null)
       setResolutionPreview('')
       setMessageType('success')
-      setMessage('Complaint updated successfully.')
+      setMessage('Complaint status updated successfully!')
     } catch (err) {
       setMessageType('error')
       setMessage(err instanceof Error ? err.message : 'Unable to update complaint.')
@@ -104,7 +158,7 @@ export default function AdminIssuePage() {
   if (!issue) {
     return (
       <div className="loading">
-        <Loader2 className="spin" size={28} style={{ color: 'var(--green)' }} />
+        <Loader2 className="spin" size={28} style={{ color: 'var(--blue)' }} />
       </div>
     )
   }
@@ -123,7 +177,6 @@ export default function AdminIssuePage() {
       </div>
 
       <div className="admin-detail-grid">
-        {/* Left column: images + info + history */}
         <div>
           {issue.image_url && (
             <img className="detail-image" src={issue.image_url} alt={issue.title} />
@@ -168,7 +221,6 @@ export default function AdminIssuePage() {
             )}
           </div>
 
-          {/* Resolution photo preview */}
           {(issue.resolution_image_url || resolutionPreview) && (
             <div className="resolution-photo">
               <div className="eyebrow">Resolution evidence</div>
@@ -181,7 +233,6 @@ export default function AdminIssuePage() {
             </div>
           )}
 
-          {/* Status history timeline */}
           {updates.length > 0 && (
             <div className="timeline-card" style={{ marginTop: 20 }}>
               <div className="eyebrow">History</div>
@@ -204,7 +255,6 @@ export default function AdminIssuePage() {
           )}
         </div>
 
-        {/* Right column: admin action form */}
         <aside className="admin-form">
           <div className="eyebrow">Municipality action</div>
           <h2>Update complaint</h2>

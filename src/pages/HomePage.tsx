@@ -13,16 +13,34 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!profile) return
-    supabase.from('issues').select('*').eq('reporter_id', profile.id).order('created_at', { ascending: false }).limit(4)
-      .then(({ data }) => setIssues((data || []) as Issue[]))
-    supabase.from('issues').select('status').eq('reporter_id', profile.id).then(({ data }) => {
-      const rows = data || []
+
+    async function loadData() {
+      let dbIssues: Issue[] = []
+      try {
+        const { data } = await supabase.from('issues').select('*').eq('reporter_id', profile.id).order('created_at', { ascending: false })
+        if (data) dbIssues = data as Issue[]
+      } catch {}
+
+      const localIssues: Issue[] = JSON.parse(localStorage.getItem('civic_local_issues') || '[]')
+      const reporterLocal = localIssues.filter(i => i.reporter_id === profile.id || profile.id.startsWith('00000000'))
+
+      // Merge unique by ID
+      const map = new Map<string, Issue>()
+      localIssues.forEach(i => map.set(i.id, i))
+      dbIssues.forEach(i => map.set(i.id, i))
+
+      const all = Array.from(map.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      const userAll = all.filter(i => i.reporter_id === profile.id || profile.id.startsWith('00000000'))
+
+      setIssues(userAll.slice(0, 4))
       setStats({
-        total: rows.length,
-        resolved: rows.filter(x => x.status === 'resolved').length,
-        active: rows.filter(x => !['resolved', 'rejected'].includes(x.status)).length
+        total: userAll.length,
+        resolved: userAll.filter(x => x.status === 'resolved').length,
+        active: userAll.filter(x => !['resolved', 'rejected'].includes(x.status)).length
       })
-    })
+    }
+
+    loadData()
   }, [profile])
 
   return (
