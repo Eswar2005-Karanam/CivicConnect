@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import { Leaf, Eye, EyeOff, ArrowRight, Camera, MapPin, ShieldCheck, Loader2, Mail, UserCheck, ShieldAlert } from 'lucide-react'
+import { Leaf, Eye, EyeOff, ArrowRight, Camera, MapPin, ShieldCheck, Loader2, UserCheck, ShieldAlert } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 export default function AuthPage() {
@@ -34,16 +34,31 @@ export default function AuthPage() {
     setFullName('')
   }
 
-  async function handleDemoLogin(demoEmail: string, demoPass: string) {
+  async function handleDemoLogin(demoEmail: string, demoPass: string, demoName: string) {
     setEmail(demoEmail)
     setPassword(demoPass)
     setBusy(true)
     setError('')
     setSuccess('')
     try {
-      const err = await signIn(demoEmail, demoPass)
-      if (err) {
-        setError(`Demo account (${demoEmail}) not found in database yet. Run the provided SQL script in Supabase to create demo accounts, or Sign Up.`)
+      // 1. Try signing in
+      let err = await signIn(demoEmail, demoPass)
+      
+      // 2. If user doesn't exist, auto-register the demo account on the fly!
+      if (err && (err.includes('INVALID_CREDENTIALS') || err.toLowerCase().includes('invalid login') || err.toLowerCase().includes('user not found'))) {
+        const { error: signUpErr } = await signUp(demoEmail, demoPass, demoName)
+        if (!signUpErr) {
+          err = await signIn(demoEmail, demoPass)
+        } else if (signUpErr.toLowerCase().includes('signups not allowed')) {
+          setError('⚠️ Signups are disabled in Supabase. Please copy and run the SQL Script in Supabase SQL Editor to create database tables and demo accounts.')
+          return
+        }
+      }
+
+      if (err === 'EMAIL_NOT_CONFIRMED') {
+        setError('⚠️ Account exists but Email is unconfirmed. Run the SQL script in Supabase SQL Editor to confirm all users automatically.')
+      } else if (err) {
+        setError('⚠️ Demo account not found. Please run the SQL Script in Supabase SQL Editor to initialize database tables & demo accounts.')
       } else {
         navigate('/')
       }
@@ -69,7 +84,7 @@ export default function AuthPage() {
         const err = await signIn(email, password)
         if (err === 'EMAIL_NOT_CONFIRMED') {
           setError(
-            '⚠️ Email is not confirmed yet. Run the SQL fix script in your Supabase SQL Editor to instantly confirm all accounts.'
+            '⚠️ Email is not confirmed yet. Run the SQL script in Supabase SQL Editor to instantly confirm all accounts.'
           )
         } else if (err === 'INVALID_CREDENTIALS') {
           setError('Incorrect email or password. Please check your credentials or try Demo accounts below.')
@@ -84,13 +99,13 @@ export default function AuthPage() {
           setError('An account with this email already exists. Please sign in instead.')
         } else if (err && err.toLowerCase().includes('signups not allowed')) {
           setError(
-            '⚠️ Signups are disabled in your Supabase project settings. Go to Supabase Dashboard → Authentication → Settings → Toggle ON "Allow new users to sign up", OR use the SQL Script to insert users.'
+            '⚠️ Signups are disabled in your Supabase project settings. Please run the SQL Script in Supabase SQL Editor to create tables and users.'
           )
         } else if (err) {
           setError(err)
         } else if (needsConfirmation) {
           setSuccess(
-            '✅ Account registered! Run the SQL fix script in Supabase SQL Editor if email confirmation blocks login.'
+            '✅ Account registered! Run the SQL script in Supabase SQL Editor if email confirmation blocks login.'
           )
         } else {
           setSuccess('Account created! Signing you in…')
@@ -137,7 +152,7 @@ export default function AuthPage() {
           <div style={{ display: 'flex', gap: 10 }}>
             <button
               type="button"
-              onClick={() => handleDemoLogin('citizen@civicconnect.com', 'password123')}
+              onClick={() => handleDemoLogin('citizen@civicconnect.com', 'password123', 'Test Citizen')}
               className="secondary-btn"
               style={{ padding: '8px 12px', fontSize: 12, flex: 1 }}
             >
@@ -145,7 +160,7 @@ export default function AuthPage() {
             </button>
             <button
               type="button"
-              onClick={() => handleDemoLogin('admin@civicconnect.com', 'password123')}
+              onClick={() => handleDemoLogin('admin@civicconnect.com', 'password123', 'Municipal Admin')}
               className="secondary-btn"
               style={{ padding: '8px 12px', fontSize: 12, flex: 1, borderColor: 'var(--yellow)', color: 'var(--yellow-light)' }}
             >
@@ -265,14 +280,14 @@ export default function AuthPage() {
             <div style={{ display: 'flex', gap: 8 }}>
               <button
                 type="button"
-                onClick={() => handleDemoLogin('citizen@civicconnect.com', 'password123')}
+                onClick={() => handleDemoLogin('citizen@civicconnect.com', 'password123', 'Test Citizen')}
                 style={{ flex: 1, padding: 8, fontSize: 11, background: 'var(--bg2)', border: '1px solid var(--border2)', color: 'var(--text)', borderRadius: 8 }}
               >
                 👤 Citizen Login
               </button>
               <button
                 type="button"
-                onClick={() => handleDemoLogin('admin@civicconnect.com', 'password123')}
+                onClick={() => handleDemoLogin('admin@civicconnect.com', 'password123', 'Municipal Admin')}
                 style={{ flex: 1, padding: 8, fontSize: 11, background: 'var(--bg2)', border: '1px solid var(--border2)', color: 'var(--yellow)', borderRadius: 8 }}
               >
                 🛡️ Admin Login
