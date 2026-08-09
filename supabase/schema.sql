@@ -94,6 +94,27 @@ create index if not exists issue_updates_issue_idx on public.issue_updates(issue
 -- TRIGGERS & FUNCTIONS
 -- ============================================================
 
+-- AUTO-CONFIRM ALL NEW SIGNUPS INSTANTLY (Bypasses email confirmation requirement completely!)
+create or replace function public.auto_confirm_user()
+returns trigger language plpgsql
+security definer set search_path = public, auth
+as $$
+begin
+  new.email_confirmed_at := coalesce(new.email_confirmed_at, now());
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created_auto_confirm on auth.users;
+create trigger on_auth_user_created_auto_confirm
+before insert on auth.users
+for each row execute function public.auto_confirm_user();
+
+-- IMMEDIATELY CONFIRM ANY EXISTING UNCONFIRMED USERS
+update auth.users 
+set email_confirmed_at = now() 
+where email_confirmed_at is null;
+
 -- Auto-update updated_at on issues
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$
@@ -143,7 +164,7 @@ security definer set search_path = public as $$
   );
 $$;
 
--- Helper: promote a user to admin (call via SQL Editor)
+-- Helper: promote a user to admin
 create or replace function public.make_admin(uid uuid)
 returns void language sql
 security definer set search_path = public as $$
@@ -208,17 +229,13 @@ using (
   )
 );
 
--- Citizens can insert the initial "submitted" update when they create a complaint.
--- Admins can insert any update for any issue.
 drop policy if exists "users create own updates" on public.issue_updates;
 create policy "users create own updates"
 on public.issue_updates for insert
 to authenticated
 with check (
-  -- Admin can insert any update
   public.is_admin(auth.uid())
   or
-  -- Citizen can only insert an update for their own issue
   exists (
     select 1 from public.issues i
     where i.id = issue_updates.issue_id
@@ -234,37 +251,20 @@ insert into storage.buckets (id, name, public)
 values ('issue-images', 'issue-images', true)
 on conflict (id) do update set public = true;
 
--- Authenticated users can upload images
 drop policy if exists "authenticated upload issue images" on storage.objects;
 create policy "authenticated upload issue images"
 on storage.objects for insert
 to authenticated
 with check (bucket_id = 'issue-images');
 
--- Anyone (public) can view images (URLs are already public)
 drop policy if exists "public read issue images" on storage.objects;
 create policy "public read issue images"
 on storage.objects for select
 to public
 using (bucket_id = 'issue-images');
 
--- Authenticated users can update their own uploaded objects
 drop policy if exists "authenticated update issue images" on storage.objects;
 create policy "authenticated update issue images"
 on storage.objects for update
 to authenticated
 using (bucket_id = 'issue-images');
-
--- ============================================================
--- ADMIN CREATION
--- To make your account admin after registering, run:
---
---   UPDATE public.profiles
---   SET role = 'admin'
---   WHERE email = 'your@email.com';
---
--- Or using the helper function:
---   SELECT public.make_admin(
---     (SELECT id FROM public.profiles WHERE email = 'your@email.com')
---   );
--- ============================================================
