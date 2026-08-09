@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import { Leaf, Eye, EyeOff, ArrowRight, Camera, MapPin, ShieldCheck, Loader2, Mail } from 'lucide-react'
+import { Leaf, Eye, EyeOff, ArrowRight, Camera, MapPin, ShieldCheck, Loader2, Mail, UserCheck, ShieldAlert } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 export default function AuthPage() {
@@ -34,6 +34,24 @@ export default function AuthPage() {
     setFullName('')
   }
 
+  async function handleDemoLogin(demoEmail: string, demoPass: string) {
+    setEmail(demoEmail)
+    setPassword(demoPass)
+    setBusy(true)
+    setError('')
+    setSuccess('')
+    try {
+      const err = await signIn(demoEmail, demoPass)
+      if (err) {
+        setError(`Demo account (${demoEmail}) not found in database yet. Run the provided SQL script in Supabase to create demo accounts, or Sign Up.`)
+      } else {
+        navigate('/')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
@@ -51,11 +69,10 @@ export default function AuthPage() {
         const err = await signIn(email, password)
         if (err === 'EMAIL_NOT_CONFIRMED') {
           setError(
-            '⚠️ Your email is not confirmed yet. Please check your inbox and click the confirmation link. ' +
-            'Or ask your admin to disable email confirmation in Supabase Dashboard → Authentication → Settings.'
+            '⚠️ Email is not confirmed yet. Run the SQL fix script in your Supabase SQL Editor to instantly confirm all accounts.'
           )
         } else if (err === 'INVALID_CREDENTIALS') {
-          setError('Incorrect email or password. Please try again.')
+          setError('Incorrect email or password. Please check your credentials or try Demo accounts below.')
         } else if (err) {
           setError(err)
         } else {
@@ -65,11 +82,15 @@ export default function AuthPage() {
         const { error: err, needsConfirmation } = await signUp(email, password, fullName)
         if (err === 'ALREADY_EXISTS') {
           setError('An account with this email already exists. Please sign in instead.')
+        } else if (err && err.toLowerCase().includes('signups not allowed')) {
+          setError(
+            '⚠️ Signups are disabled in your Supabase project settings. Go to Supabase Dashboard → Authentication → Settings → Toggle ON "Allow new users to sign up", OR use the SQL Script to insert users.'
+          )
         } else if (err) {
           setError(err)
         } else if (needsConfirmation) {
           setSuccess(
-            '✅ Account created! Please check your email inbox and click the confirmation link to activate your account.'
+            '✅ Account registered! Run the SQL fix script in Supabase SQL Editor if email confirmation blocks login.'
           )
         } else {
           setSuccess('Account created! Signing you in…')
@@ -101,12 +122,43 @@ export default function AuthPage() {
           <div><MapPin size={16} /> Precise location tracking</div>
           <div><ShieldCheck size={16} /> Live resolution status</div>
         </div>
+
+        {/* Demo Quick Access Card */}
+        <div style={{
+          marginTop: 40, padding: 18, borderRadius: 16, background: 'rgba(255,255,255,0.06)',
+          border: '1px solid rgba(255,255,255,0.12)', backdropFilter: 'blur(10px)', position: 'relative', zIndex: 2
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.1em', color: 'var(--yellow)', marginBottom: 8 }}>
+            ⚡ Hackathon Quick Login
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 12 }}>
+            Instant access with pre-configured accounts:
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              type="button"
+              onClick={() => handleDemoLogin('citizen@civicconnect.com', 'password123')}
+              className="secondary-btn"
+              style={{ padding: '8px 12px', fontSize: 12, flex: 1 }}
+            >
+              <UserCheck size={14} /> Citizen Login
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDemoLogin('admin@civicconnect.com', 'password123')}
+              className="secondary-btn"
+              style={{ padding: '8px 12px', fontSize: 12, flex: 1, borderColor: 'var(--yellow)', color: 'var(--yellow-light)' }}
+            >
+              <ShieldAlert size={14} /> Admin Login
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* ── Right form panel ── */}
       <div className="auth-card-wrap">
         <div className="auth-card">
-          {/* Mobile-only brand */}
+          {/* Mobile brand */}
           <div className="mobile-brand">
             <span className="brand-mark" style={{ width: 32, height: 32 }}>
               <Leaf size={16} />
@@ -184,13 +236,7 @@ export default function AuthPage() {
 
             {error && (
               <div className="error-box" role="alert">
-                {error.startsWith('⚠️') && (
-                  <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Mail size={15} />
-                    <strong>Email confirmation required</strong>
-                  </div>
-                )}
-                {error.replace('⚠️ ', '')}
+                {error}
               </div>
             )}
             {success && (
@@ -212,6 +258,27 @@ export default function AuthPage() {
               }
             </button>
           </form>
+
+          {/* Quick Demo Access for Mobile */}
+          <div style={{ marginTop: 20, paddingTop: 15, borderTop: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>Quick Login:</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => handleDemoLogin('citizen@civicconnect.com', 'password123')}
+                style={{ flex: 1, padding: 8, fontSize: 11, background: 'var(--bg2)', border: '1px solid var(--border2)', color: 'var(--text)', borderRadius: 8 }}
+              >
+                👤 Citizen Login
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDemoLogin('admin@civicconnect.com', 'password123')}
+                style={{ flex: 1, padding: 8, fontSize: 11, background: 'var(--bg2)', border: '1px solid var(--border2)', color: 'var(--yellow)', borderRadius: 8 }}
+              >
+                🛡️ Admin Login
+              </button>
+            </div>
+          </div>
 
           <div className="auth-switch">
             {mode === 'login' ? 'New to CivicConnect?' : 'Already have an account?'}

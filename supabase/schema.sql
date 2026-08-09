@@ -1,46 +1,28 @@
 -- ============================================================
--- CivicConnect – Complete Database Schema
+-- CivicConnect – Complete Database Schema & Demo Accounts
 -- Run this entire file in Supabase SQL Editor.
--- Safe to re-run: uses IF NOT EXISTS and DROP IF EXISTS.
 -- ============================================================
 
--- Enable required extensions
 create extension if not exists pgcrypto;
 
--- ============================================================
--- ENUMS
--- ============================================================
-
+-- Enums
 do $$ begin
   create type public.user_role as enum ('user', 'admin');
 exception when duplicate_object then null; end $$;
 
 do $$ begin
   create type public.issue_status as enum (
-    'submitted',
-    'under_review',
-    'assigned',
-    'in_progress',
-    'resolved',
-    'rejected'
+    'submitted', 'under_review', 'assigned', 'in_progress', 'resolved', 'rejected'
   );
 exception when duplicate_object then null; end $$;
 
 do $$ begin
   create type public.issue_category as enum (
-    'garbage',
-    'road_damage',
-    'drainage',
-    'water',
-    'streetlight',
-    'other'
+    'garbage', 'road_damage', 'drainage', 'water', 'streetlight', 'other'
   );
 exception when duplicate_object then null; end $$;
 
--- ============================================================
--- TABLES
--- ============================================================
-
+-- Tables
 create table if not exists public.profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
   full_name   text,
@@ -80,21 +62,14 @@ create table if not exists public.issue_updates (
   created_at  timestamptz not null default now()
 );
 
--- ============================================================
--- INDEXES
--- ============================================================
-
+-- Indexes
 create index if not exists issues_reporter_idx   on public.issues(reporter_id);
 create index if not exists issues_status_idx     on public.issues(status);
 create index if not exists issues_category_idx   on public.issues(category);
 create index if not exists issues_created_idx    on public.issues(created_at desc);
 create index if not exists issue_updates_issue_idx on public.issue_updates(issue_id, created_at);
 
--- ============================================================
--- TRIGGERS & FUNCTIONS
--- ============================================================
-
--- AUTO-CONFIRM ALL NEW SIGNUPS INSTANTLY (Bypasses email confirmation requirement completely!)
+-- Auto Confirm Trigger for Signups
 create or replace function public.auto_confirm_user()
 returns trigger language plpgsql
 security definer set search_path = public, auth
@@ -110,26 +85,7 @@ create trigger on_auth_user_created_auto_confirm
 before insert on auth.users
 for each row execute function public.auto_confirm_user();
 
--- IMMEDIATELY CONFIRM ANY EXISTING UNCONFIRMED USERS
-update auth.users 
-set email_confirmed_at = now() 
-where email_confirmed_at is null;
-
--- Auto-update updated_at on issues
-create or replace function public.set_updated_at()
-returns trigger language plpgsql as $$
-begin
-  new.updated_at = now();
-  return new;
-end;
-$$;
-
-drop trigger if exists issues_updated_at on public.issues;
-create trigger issues_updated_at
-before update on public.issues
-for each row execute function public.set_updated_at();
-
--- Auto-create profile on new Supabase Auth user signup
+-- Auto Profile Trigger
 create or replace function public.handle_new_user()
 returns trigger language plpgsql
 security definer set search_path = public
@@ -154,117 +110,100 @@ create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_user();
 
--- Helper: check if a user is admin
-create or replace function public.is_admin(uid uuid)
-returns boolean language sql stable
-security definer set search_path = public as $$
-  select exists (
-    select 1 from public.profiles
-    where id = uid and role = 'admin'
-  );
-$$;
+-- Auto Confirm existing users
+update auth.users set email_confirmed_at = now() where email_confirmed_at is null;
 
--- Helper: promote a user to admin
-create or replace function public.make_admin(uid uuid)
-returns void language sql
-security definer set search_path = public as $$
-  update public.profiles set role = 'admin' where id = uid;
-$$;
-
--- ============================================================
--- ROW LEVEL SECURITY
--- ============================================================
-
+-- Row Level Security
 alter table public.profiles     enable row level security;
 alter table public.issues       enable row level security;
 alter table public.issue_updates enable row level security;
 
--- ---- profiles ----
-
 drop policy if exists "profiles own read" on public.profiles;
-create policy "profiles own read"
-on public.profiles for select
-to authenticated
-using (id = auth.uid() or public.is_admin(auth.uid()));
+create policy "profiles own read" on public.profiles for select to authenticated
+using (id = auth.uid() or (select role from public.profiles where id = auth.uid()) = 'admin');
 
 drop policy if exists "profiles own update" on public.profiles;
-create policy "profiles own update"
-on public.profiles for update
-to authenticated
-using (id = auth.uid() or public.is_admin(auth.uid()))
-with check (id = auth.uid() or public.is_admin(auth.uid()));
-
--- ---- issues ----
+create policy "profiles own update" on public.profiles for update to authenticated
+using (id = auth.uid() or (select role from public.profiles where id = auth.uid()) = 'admin');
 
 drop policy if exists "users create issues" on public.issues;
-create policy "users create issues"
-on public.issues for insert
-to authenticated
+create policy "users create issues" on public.issues for insert to authenticated
 with check (reporter_id = auth.uid());
 
 drop policy if exists "users read own issues" on public.issues;
-create policy "users read own issues"
-on public.issues for select
-to authenticated
-using (reporter_id = auth.uid() or public.is_admin(auth.uid()));
+create policy "users read own issues" on public.issues for select to authenticated
+using (reporter_id = auth.uid() or (select role from public.profiles where id = auth.uid()) = 'admin');
 
 drop policy if exists "admins update issues" on public.issues;
-create policy "admins update issues"
-on public.issues for update
-to authenticated
-using (public.is_admin(auth.uid()))
-with check (public.is_admin(auth.uid()));
-
--- ---- issue_updates ----
+create policy "admins update issues" on public.issues for update to authenticated
+using ((select role from public.profiles where id = auth.uid()) = 'admin');
 
 drop policy if exists "users read own updates" on public.issue_updates;
-create policy "users read own updates"
-on public.issue_updates for select
-to authenticated
+create policy "users read own updates" on public.issue_updates for select to authenticated
 using (
   exists (
     select 1 from public.issues i
     where i.id = issue_updates.issue_id
-      and (i.reporter_id = auth.uid() or public.is_admin(auth.uid()))
+      and (i.reporter_id = auth.uid() or (select role from public.profiles where id = auth.uid()) = 'admin')
   )
 );
 
 drop policy if exists "users create own updates" on public.issue_updates;
-create policy "users create own updates"
-on public.issue_updates for insert
-to authenticated
+create policy "users create own updates" on public.issue_updates for insert to authenticated
 with check (
-  public.is_admin(auth.uid())
+  (select role from public.profiles where id = auth.uid()) = 'admin'
   or
-  exists (
-    select 1 from public.issues i
-    where i.id = issue_updates.issue_id
-      and i.reporter_id = auth.uid()
-  )
+  exists (select 1 from public.issues i where i.id = issue_updates.issue_id and i.reporter_id = auth.uid())
 );
 
--- ============================================================
--- STORAGE: issue-images bucket
--- ============================================================
-
-insert into storage.buckets (id, name, public)
-values ('issue-images', 'issue-images', true)
+-- Storage bucket
+insert into storage.buckets (id, name, public) values ('issue-images', 'issue-images', true)
 on conflict (id) do update set public = true;
 
 drop policy if exists "authenticated upload issue images" on storage.objects;
-create policy "authenticated upload issue images"
-on storage.objects for insert
-to authenticated
-with check (bucket_id = 'issue-images');
+create policy "authenticated upload issue images" on storage.objects for insert to authenticated with check (bucket_id = 'issue-images');
 
 drop policy if exists "public read issue images" on storage.objects;
-create policy "public read issue images"
-on storage.objects for select
-to public
-using (bucket_id = 'issue-images');
+create policy "public read issue images" on storage.objects for select to public using (bucket_id = 'issue-images');
 
 drop policy if exists "authenticated update issue images" on storage.objects;
-create policy "authenticated update issue images"
-on storage.objects for update
-to authenticated
-using (bucket_id = 'issue-images');
+create policy "authenticated update issue images" on storage.objects for update to authenticated using (bucket_id = 'issue-images');
+
+-- ============================================================
+-- CREATE INSTANT DEMO ACCOUNTS (No signup configuration needed!)
+-- ============================================================
+
+-- Citizen: citizen@civicconnect.com / password123
+do $$
+declare
+  cid uuid := gen_random_uuid();
+begin
+  if not exists (select 1 from auth.users where email = 'citizen@civicconnect.com') then
+    insert into auth.users (
+      instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, raw_user_meta_data, created_at, updated_at
+    ) values (
+      '00000000-0000-0000-0000-000000000000', cid, 'authenticated', 'authenticated',
+      'citizen@civicconnect.com', crypt('password123', gen_salt('bf')), now(),
+      '{"full_name":"Test Citizen"}'::jsonb, now(), now()
+    );
+  end if;
+end $$;
+
+-- Admin: admin@civicconnect.com / password123
+do $$
+declare
+  aid uuid := gen_random_uuid();
+begin
+  if not exists (select 1 from auth.users where email = 'admin@civicconnect.com') then
+    insert into auth.users (
+      instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, raw_user_meta_data, created_at, updated_at
+    ) values (
+      '00000000-0000-0000-0000-000000000000', aid, 'authenticated', 'authenticated',
+      'admin@civicconnect.com', crypt('password123', gen_salt('bf')), now(),
+      '{"full_name":"Municipal Admin"}'::jsonb, now(), now()
+    );
+  end if;
+end $$;
+
+-- Make sure admin account has admin role
+update public.profiles set role = 'admin' where email = 'admin@civicconnect.com';
