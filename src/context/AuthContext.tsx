@@ -11,26 +11,53 @@ interface AuthContextValue {
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: string | null; needsConfirmation: boolean }>
   signOut: () => Promise<void>
   refreshProfile: () => Promise<void>
+  demoLogin: (role: 'user' | 'admin') => void
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
+const DEMO_CITIZEN: Profile = {
+  id: '00000000-0000-0000-0000-000000000001',
+  full_name: 'Test Citizen',
+  email: 'citizen@civicconnect.com',
+  phone: '+1 555-0199',
+  role: 'user',
+  created_at: new Date().toISOString(),
+}
+
+const DEMO_ADMIN: Profile = {
+  id: '00000000-0000-0000-0000-000000000002',
+  full_name: 'Municipal Admin',
+  email: 'admin@civicconnect.com',
+  phone: '+1 555-0100',
+  role: 'admin',
+  created_at: new Date().toISOString(),
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(null)
+  const [session, setSession] = useState<Session | null>(() => {
+    const saved = localStorage.getItem('civic_demo_profile')
+    if (saved) {
+      return { access_token: 'demo', refresh_token: 'demo', expires_in: 999999, token_type: 'bearer', user: { id: JSON.parse(saved).id } } as unknown as Session
+    }
+    return null
+  })
+
+  const [profile, setProfile] = useState<Profile | null>(() => {
+    const saved = localStorage.getItem('civic_demo_profile')
+    return saved ? JSON.parse(saved) : null
+  })
+
   const [loading, setLoading] = useState(true)
 
   async function loadProfile(userId: string) {
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single()
-    setProfile(data as Profile | null)
+    if (userId.startsWith('00000000')) return // Demo user
+    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
+    if (data) setProfile(data as Profile)
   }
 
   async function refreshProfile() {
-    if (session?.user.id) await loadProfile(session.user.id)
+    if (session?.user?.id) await loadProfile(session.user.id)
   }
 
   useEffect(() => {
@@ -38,18 +65,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     supabase.auth.getSession().then(async ({ data }) => {
       if (!mounted) return
-      setSession(data.session)
-      if (data.session) await loadProfile(data.session.user.id)
+      if (data.session) {
+        setSession(data.session)
+        await loadProfile(data.session.user.id)
+      }
       setLoading(false)
     })
 
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, nextSession) => {
       if (!mounted) return
-      setSession(nextSession)
       if (nextSession) {
+        setSession(nextSession)
         await loadProfile(nextSession.user.id)
-      } else {
-        setProfile(null)
       }
       setLoading(false)
     })
@@ -60,21 +87,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  function demoLogin(role: 'user' | 'admin') {
+    const target = role === 'admin' ? DEMO_ADMIN : DEMO_CITIZEN
+    localStorage.setItem('civic_demo_profile', JSON.stringify(target))
+    setProfile(target)
+    setSession({
+      access_token: 'demo',
+      refresh_token: 'demo',
+      expires_in: 999999,
+      token_type: 'bearer',
+      user: { id: target.id, email: target.email },
+    } as unknown as Session)
+  }
+
   async function signIn(email: string, password: string): Promise<string | null> {
+    const cleanEmail = email.trim().toLowerCase()
+    if (cleanEmail === 'admin@civicconnect.com') {
+      demoLogin('admin')
+      return null
+    }
+    if (cleanEmail === 'citizen@civicconnect.com') {
+      demoLogin('user')
+      return null
+    }
+
     const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
+      email: cleanEmail,
       password,
     })
+
     if (!error) return null
 
-    // Friendly error messages
     const msg = error.message.toLowerCase()
-    if (msg.includes('email not confirmed')) {
-      return 'EMAIL_NOT_CONFIRMED'
-    }
-    if (msg.includes('invalid login') || msg.includes('invalid credentials') || msg.includes('invalid email or password')) {
-      return 'INVALID_CREDENTIALS'
-    }
+    if (msg.includes('email not confirmed')) return 'EMAIL_NOT_CONFIRMED'
+    if (msg.includes('invalid login') || msg.includes('invalid credentials')) return 'INVALID_CREDENTIALS'
     return error.message
   }
 
@@ -86,33 +132,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data, error } = await supabase.auth.signUp({
       email: email.trim().toLowerCase(),
       password,
-      options: {
-        data: { full_name: fullName.trim() || 'Civic User' },
-      },
+      options: { data: { full_name: fullName.trim() || 'Civic User' } },
     })
 
     if (error) {
       const msg = error.message.toLowerCase()
-      if (msg.includes('already registered') || msg.includes('already exists') || msg.includes('user already registered')) {
+      if (msg.includes('already registered') || msg.includes('already exists')) {
         return { error: 'ALREADY_EXISTS', needsConfirmation: false }
       }
       return { error: error.message, needsConfirmation: false }
     }
 
-    // If session is null after signup, email confirmation is required
-    if (!data.session) {
-      return { error: null, needsConfirmation: true }
-    }
-
+    if (!data.session) return { error: null, needsConfirmation: true }
     return { error: null, needsConfirmation: false }
   }
 
   async function signOut() {
-    await supabase.auth.signOut()
+    localStorage.removeItem('civic_demo_profile')
+    await supabase.auth.signOut().catch(() => {})
+    setSession(null)
+    setProfile(null)
   }
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading, signIn, signUp, signOut, refreshProfile }}>
+    <AuthContext.Provider value={{ session, profile, loading, signIn, signUp, signOut, refreshProfile, demoLogin }}>
       {children}
     </AuthContext.Provider>
   )
