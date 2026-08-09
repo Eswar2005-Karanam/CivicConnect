@@ -13,11 +13,12 @@ export default function MyIssuesPage() {
 
   useEffect(() => {
     if (!profile) return
+    const userProfile = profile
 
     async function loadData() {
       let dbIssues: Issue[] = []
       try {
-        const { data } = await supabase.from('issues').select('*').eq('reporter_id', profile.id).order('created_at', { ascending: false })
+        const { data } = await supabase.from('issues').select('*').eq('reporter_id', userProfile.id).order('created_at', { ascending: false })
         if (data) dbIssues = data as Issue[]
       } catch {}
 
@@ -27,7 +28,7 @@ export default function MyIssuesPage() {
       dbIssues.forEach(i => map.set(i.id, i))
 
       const all = Array.from(map.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      const userAll = all.filter(i => i.reporter_id === profile.id || profile.id.startsWith('00000000'))
+      const userAll = all.filter(i => i.reporter_id === userProfile.id || userProfile.id.startsWith('00000000'))
       setIssues(userAll)
     }
 

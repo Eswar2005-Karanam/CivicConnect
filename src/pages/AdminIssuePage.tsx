@@ -24,7 +24,6 @@ export default function AdminIssuePage() {
   async function load() {
     if (!id) return
 
-    // 1. Try fetching from Supabase
     try {
       const { data } = await supabase
         .from('issues')
@@ -45,7 +44,6 @@ export default function AdminIssuePage() {
       }
     } catch {}
 
-    // 2. Fallback to local storage
     const localIssues: Issue[] = JSON.parse(localStorage.getItem('civic_local_issues') || '[]')
     const found = localIssues.find(i => i.id === id)
     if (found) {
@@ -91,8 +89,6 @@ export default function AdminIssuePage() {
         }
       }
 
-      // Try updating Supabase DB
-      let updatedDb = false
       try {
         const { error } = await supabase.from('issues').update({
           status,
@@ -102,17 +98,17 @@ export default function AdminIssuePage() {
         }).eq('id', issue.id)
 
         if (!error) {
-          await supabase.from('issue_updates').insert({
-            issue_id: issue.id,
-            status,
-            note: response.trim() || statusMeta[status].description,
-            updated_by: profile.id,
-          }).catch(() => {})
-          updatedDb = true
+          try {
+            await supabase.from('issue_updates').insert({
+              issue_id: issue.id,
+              status,
+              note: response.trim() || statusMeta[status].description,
+              updated_by: profile.id,
+            })
+          } catch {}
         }
       } catch {}
 
-      // Always update local state as well
       const localIssues: Issue[] = JSON.parse(localStorage.getItem('civic_local_issues') || '[]')
       const idx = localIssues.findIndex(i => i.id === issue.id)
       const updatedIssue: Issue = {

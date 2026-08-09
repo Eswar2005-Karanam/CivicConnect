@@ -113,12 +113,14 @@ export default function ReportPage() {
         }).select().single()
 
         if (!error && issue) {
-          await supabase.from('issue_updates').insert({
-            issue_id: issue.id,
-            status: 'submitted',
-            note: 'Complaint submitted by citizen.',
-            updated_by: profile.id
-          }).catch(() => {})
+          try {
+            await supabase.from('issue_updates').insert({
+              issue_id: issue.id,
+              status: 'submitted',
+              note: 'Complaint submitted by citizen.',
+              updated_by: profile.id
+            })
+          } catch {}
           
           navigate(`/issues/${issue.id}`)
           return
