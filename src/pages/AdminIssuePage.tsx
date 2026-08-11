@@ -57,6 +57,43 @@ export default function AdminIssuePage() {
 
   useEffect(() => { load() }, [id])
 
+  // Dynamically load Leaflet for displaying map location
+  useEffect(() => {
+    if (!issue || !issue.latitude || !issue.longitude) return
+
+    if ((window as any).L) {
+      renderMap()
+      return
+    }
+
+    const cssLink = document.createElement('link')
+    cssLink.rel = 'stylesheet'
+    cssLink.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
+    document.head.appendChild(cssLink)
+
+    const jsScript = document.createElement('script')
+    jsScript.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+    jsScript.onload = () => {
+      renderMap()
+    }
+    document.body.appendChild(jsScript)
+  }, [issue])
+
+  function renderMap() {
+    const L = (window as any).L
+    if (!L || !issue || !issue.latitude || !issue.longitude) return
+
+    const container = document.getElementById('admin-detail-map')
+    if (!container || (container as any)._leaflet_id) return
+
+    const map = L.map('admin-detail-map').setView([issue.latitude, issue.longitude], 15)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map)
+
+    L.marker([issue.latitude, issue.longitude]).addTo(map)
+  }
+
   function selectResolutionFile(f?: File) {
     if (!f) return
     setResolutionFile(f)
@@ -213,6 +250,12 @@ export default function AdminIssuePage() {
                   <small>GPS coordinates</small>
                   {issue.latitude.toFixed(6)}, {issue.longitude?.toFixed(6)}
                 </span>
+              </div>
+            )}
+            {issue.latitude && issue.longitude && (
+              <div style={{ marginTop: 15, padding: '0 0' }}>
+                <small style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 700 }}>Map Location</small>
+                <div id="admin-detail-map" className="map-container" style={{ height: 200, marginTop: 8 }}></div>
               </div>
             )}
           </div>

@@ -39,6 +39,43 @@ export default function IssueDetailPage() {
     loadData()
   }, [id])
 
+  // Dynamically load Leaflet for displaying map location
+  useEffect(() => {
+    if (!issue || !issue.latitude || !issue.longitude) return
+
+    if ((window as any).L) {
+      renderMap()
+      return
+    }
+
+    const cssLink = document.createElement('link')
+    cssLink.rel = 'stylesheet'
+    cssLink.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
+    document.head.appendChild(cssLink)
+
+    const jsScript = document.createElement('script')
+    jsScript.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+    jsScript.onload = () => {
+      renderMap()
+    }
+    document.body.appendChild(jsScript)
+  }, [issue])
+
+  function renderMap() {
+    const L = (window as any).L
+    if (!L || !issue || !issue.latitude || !issue.longitude) return
+
+    const container = document.getElementById('detail-map')
+    if (!container || (container as any)._leaflet_id) return
+
+    const map = L.map('detail-map').setView([issue.latitude, issue.longitude], 15)
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map)
+
+    L.marker([issue.latitude, issue.longitude]).addTo(map)
+  }
+
   if (!issue) return <div className="loading">Loading report…</div>
 
   return (
@@ -74,6 +111,12 @@ export default function IssueDetailPage() {
             <div className="info-row">
               <MapPin size={17} />
               <span><small>Location</small>{issue.location_text}</span>
+            </div>
+          )}
+          {issue.latitude && issue.longitude && (
+            <div style={{ marginTop: 15, padding: '0 0' }}>
+              <small style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 700 }}>Map Location</small>
+              <div id="detail-map" className="map-container" style={{ height: 200, marginTop: 8 }}></div>
             </div>
           )}
           {issue.admin_response && (
