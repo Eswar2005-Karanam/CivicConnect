@@ -78,7 +78,7 @@ VITE_SUPABASE_ANON_KEY=your-anon-public-key-here
 npm run dev
 ```
 
-The app will be available at `http://localhost:5173`.
+The app will be available at `https://civicconnect-red.vercel.app`. (Locally runs on `http://localhost:5173`)
 
 ---
 
